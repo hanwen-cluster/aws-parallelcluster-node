@@ -42,7 +42,7 @@ from common.utils import check_command_output, read_json, sleep_remaining_loop_t
 from retrying import retry
 from slurm_plugin.capacity_block_manager import CapacityBlockManager
 from slurm_plugin.cluster_event_publisher import ClusterEventPublisher
-from slurm_plugin.common import TIMESTAMP_FORMAT, ScalingStrategy, log_exception, print_with_count
+from slurm_plugin.common import TIMESTAMP_FORMAT, ScalingStrategy, log_exception, merge_overrides, print_with_count
 from slurm_plugin.console_logger import ConsoleLogger
 from slurm_plugin.instance_manager import InstanceManager
 from slurm_plugin.slurm_resources import (
@@ -141,6 +141,7 @@ class ClustermgtdConfig:
         "assign_node_max_batch_size": 500,
         "update_node_address": True,
         "run_instances_overrides": "/opt/slurm/etc/pcluster/run_instances_overrides.json",
+        "pcluster_run_instances_overrides": "/opt/slurm/etc/pcluster/pcluster_run_instances_overrides.json",
         "create_fleet_overrides": "/opt/slurm/etc/pcluster/create_fleet_overrides.json",
         "fleet_config_file": "/etc/parallelcluster/slurm_plugin/fleet-config.json",
         # Terminate configs
@@ -248,7 +249,14 @@ class ClustermgtdConfig:
         run_instances_overrides_file = config.get(
             "clustermgtd", "run_instances_overrides", fallback=self.DEFAULTS.get("run_instances_overrides")
         )
-        self.run_instances_overrides = read_json(run_instances_overrides_file, default={})
+        pcluster_run_instances_overrides_file = config.get(
+            "clustermgtd", "pcluster_run_instances_overrides",
+            fallback=self.DEFAULTS.get("pcluster_run_instances_overrides")
+        )
+        self.run_instances_overrides = merge_overrides(
+            managed=read_json(pcluster_run_instances_overrides_file, default={}),
+            legacy=read_json(run_instances_overrides_file, default={}),
+        )
         create_fleet_overrides_file = config.get(
             "clustermgtd", "create_fleet_overrides", fallback=self.DEFAULTS.get("create_fleet_overrides")
         )

@@ -158,3 +158,31 @@ def is_clustermgtd_heartbeat_valid(current_time, clustermgtd_timeout, clustermgt
     except Exception as e:
         logger.error("Unable to retrieve clustermgtd heartbeat with exception: %s", e)
         return False
+
+
+def merge_overrides(managed, legacy):
+    """
+    Merge managed (from cluster config) and legacy (user-managed) overrides.
+
+    For each queue/compute_resource, managed overrides take precedence.
+    If no managed override exists for a compute resource, the legacy override is used.
+    This is a per-compute-resource complete overrule, not a deep merge.
+    """
+    merged = {}
+    all_queues = set(list(managed.keys()) + list(legacy.keys()))
+    for queue in all_queues:
+        managed_crs = managed.get(queue, {})
+        legacy_crs = legacy.get(queue, {})
+        merged_crs = {**legacy_crs}
+        merged_crs.update(managed_crs)
+        if managed_crs and legacy_crs:
+            overlapping = set(managed_crs.keys()) & set(legacy_crs.keys())
+            if overlapping:
+                logger.info(
+                    "Managed overrides from cluster config take precedence over legacy overrides "
+                    "for queue '%s', compute resources: %s",
+                    queue,
+                    list(overlapping),
+                )
+        merged[queue] = merged_crs
+    return merged

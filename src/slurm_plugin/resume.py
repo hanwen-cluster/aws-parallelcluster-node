@@ -21,7 +21,7 @@ from botocore.config import Config
 from common.schedulers.slurm_commands import get_nodes_info, set_nodes_down
 from common.utils import read_json
 from slurm_plugin.cluster_event_publisher import ClusterEventPublisher
-from slurm_plugin.common import ScalingStrategy, is_clustermgtd_heartbeat_valid, print_with_count
+from slurm_plugin.common import ScalingStrategy, is_clustermgtd_heartbeat_valid, merge_overrides, print_with_count
 from slurm_plugin.instance_manager import InstanceManager
 from slurm_plugin.slurm_resources import CONFIG_FILE_DIR
 
@@ -43,6 +43,7 @@ class SlurmResumeConfig:
         "dns_domain": None,
         "use_private_hostname": False,
         "run_instances_overrides": "/opt/slurm/etc/pcluster/run_instances_overrides.json",
+        "pcluster_run_instances_overrides": "/opt/slurm/etc/pcluster/pcluster_run_instances_overrides.json",
         "create_fleet_overrides": "/opt/slurm/etc/pcluster/create_fleet_overrides.json",
         "fleet_config_file": "/etc/parallelcluster/slurm_plugin/fleet-config.json",
         "job_level_scaling": True,
@@ -114,7 +115,14 @@ class SlurmResumeConfig:
         run_instances_overrides_file = config.get(
             "slurm_resume", "run_instances_overrides", fallback=self.DEFAULTS.get("run_instances_overrides")
         )
-        self.run_instances_overrides = read_json(run_instances_overrides_file, default={})
+        pcluster_run_instances_overrides_file = config.get(
+            "slurm_resume", "pcluster_run_instances_overrides",
+            fallback=self.DEFAULTS.get("pcluster_run_instances_overrides")
+        )
+        self.run_instances_overrides = merge_overrides(
+            managed=read_json(pcluster_run_instances_overrides_file, default={}),
+            legacy=read_json(run_instances_overrides_file, default={}),
+        )
         create_fleet_overrides_file = config.get(
             "slurm_resume", "create_fleet_overrides", fallback=self.DEFAULTS.get("create_fleet_overrides")
         )
