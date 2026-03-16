@@ -11,6 +11,7 @@
 
 import logging
 import os
+import subprocess  # nosec B404
 import time
 from configparser import ConfigParser
 from datetime import datetime, timezone
@@ -36,6 +37,10 @@ from slurm_plugin.slurm_resources import CONFIG_FILE_DIR
 
 LOOP_TIME = 60
 RELOAD_CONFIG_ITERATIONS = 10
+# Timeout in seconds to wait for graceful shutdown before forcing a reboot via sysrq.
+# If shutdown hangs (e.g., due to NFS deadlock on kernels 6.8/6.17), the watchdog
+# triggers a hard kernel reboot that bypasses all userspace and filesystem layers.
+SHUTDOWN_WATCHDOG_TIMEOUT = 300
 # Computemgtd config is under /opt/slurm/etc/pcluster/.slurm_plugin/; all compute nodes share a config
 SLURM_PLUGIN_DIR = "/opt/slurm/etc/pcluster/.slurm_plugin"
 COMPUTEMGTD_CONFIG_PATH = f"{SLURM_PLUGIN_DIR}/parallelcluster_computemgtd.conf"
@@ -131,8 +136,34 @@ def _self_terminate():
     # Sleep for 10 seconds so termination log entries are uploaded to CW logs
     log.info("Preparing to self terminate the instance in 10 seconds!")
     time.sleep(10)
+    # Start a background watchdog that will force a hard reboot if graceful shutdown hangs.
+    # On certain kernel versions (6.8, 6.17), shutdown can deadlock when NFS mounts are
+    # unresponsive (the same network loss that triggered this self-termination).
+    # The sysrq reboot is handled directly by the kernel interrupt handler and works
+    # even when processes are stuck in uninterruptible D state on dead NFS.
+    _start_shutdown_watchdog(SHUTDOWN_WATCHDOG_TIMEOUT)
     log.info("Self terminating instance now!")
     run_command("sudo shutdown -h now")
+
+
+def _start_shutdown_watchdog(timeout):
+    """Spawn a background process that forces a hard reboot if shutdown doesn't complete in time."""
+    log.info("Starting shutdown watchdog with %d second timeout", timeout)
+    try:
+        # The watchdog sleeps for the timeout period, then enables sysrq and triggers
+        # an immediate hard reboot. Using Popen with start_new_session=True so the
+        # watchdog survives even if the parent process is killed during shutdown.
+        # nosec B602: command is constructed from trusted internal constant only.
+        subprocess.Popen(  # nosec B602
+            f"sleep {timeout} && echo 1 > /proc/sys/kernel/sysrq && echo b > /proc/sysrq-trigger",
+            shell=True,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        log.warning("Failed to start shutdown watchdog: %s", e)
 
 
 @retry(stop_max_attempt_number=3, wait_fixed=1500)

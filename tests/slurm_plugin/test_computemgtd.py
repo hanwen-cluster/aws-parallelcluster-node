@@ -107,9 +107,36 @@ def test_self_terminate(mocker, caplog):
     """Verify self-termination is implemented via a shutdown command rather than calling TerminateInstances."""
     run_command_patch = mocker.patch("slurm_plugin.computemgtd.run_command")
     sleep_patch = mocker.patch("slurm_plugin.computemgtd.time.sleep")
+    watchdog_patch = mocker.patch("slurm_plugin.computemgtd._start_shutdown_watchdog")
     with caplog.at_level(logging.INFO):
         _self_terminate()
     assert_that(caplog.text).contains("Preparing to self terminate the instance in 10 seconds!")
     assert_that(caplog.text).contains("Self terminating instance now!")
     run_command_patch.assert_called_with("sudo shutdown -h now")
     sleep_patch.assert_called_with(10)
+    watchdog_patch.assert_called_once()
+
+
+def test_start_shutdown_watchdog(mocker, caplog):
+    """Verify shutdown watchdog spawns a background sysrq reboot process."""
+    popen_patch = mocker.patch("slurm_plugin.computemgtd.subprocess.Popen")
+    from slurm_plugin.computemgtd import _start_shutdown_watchdog
+
+    with caplog.at_level(logging.INFO):
+        _start_shutdown_watchdog(300)
+    assert_that(caplog.text).contains("Starting shutdown watchdog with 300 second timeout")
+    popen_patch.assert_called_once()
+    call_args = popen_patch.call_args
+    assert_that(call_args[0][0]).contains("sysrq-trigger")
+    assert_that(call_args[1]["shell"]).is_true()
+    assert_that(call_args[1]["start_new_session"]).is_true()
+
+
+def test_start_shutdown_watchdog_failure(mocker, caplog):
+    """Verify shutdown watchdog handles Popen failure gracefully."""
+    mocker.patch("slurm_plugin.computemgtd.subprocess.Popen", side_effect=OSError("mock error"))
+    from slurm_plugin.computemgtd import _start_shutdown_watchdog
+
+    with caplog.at_level(logging.WARNING):
+        _start_shutdown_watchdog(300)
+    assert_that(caplog.text).contains("Failed to start shutdown watchdog")
